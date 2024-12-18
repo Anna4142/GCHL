@@ -206,49 +206,56 @@ class SACAgent(flax.struct.PyTreeNode):
         return cls(rng, network=network, config=flax.core.FrozenDict(**config))
 
     def extract_subgoal_weights(self, rewards: jnp.ndarray, masks: jnp.ndarray) -> jnp.ndarray:
-        """
-        Extract subgoal weights based on rewards.
+            """
+            Enhanced subgoal weight extraction with decaying influence and multi-step weighting.
+            
+            Args:
+                rewards: Array of rewards for each timestep
+                masks: Array indicating non-terminal (1) or terminal (0) transitions
+                
+            Returns:
+                subgoal_weights: Array of weights for each transition
+            """
+            # Base weights
+            subgoal_weights = jnp.ones_like(rewards)
+            
+            # Get indices of reward events
+            reward_indices = jnp.where(rewards > 0)[0]
+            
+            # Parameters for weighting
+            decay_factor = 0.9  # How quickly influence decays
+            window_size = 5     # How many previous steps to weight
+            
+            def weight_window(idx, weights):
+                # Apply decaying weights to window before reward
+                window_start = jnp.maximum(0, idx - window_size)
+                steps = jnp.arange(window_size)
+                decay = decay_factor ** (window_size - steps - 1)
+                
+                for i, w in enumerate(decay):
+                    curr_idx = idx - i - 1
+                    weights = jax.lax.cond(
+                        curr_idx >= window_start,
+                        lambda: weights.at[curr_idx].multiply(
+                            w * self.config.subgoal_weight_multiplier
+                        ),
+                        lambda: weights
+                    )
+                return weights
 
-        Args:
-            rewards: Array of rewards for each timestep in the batch.
-            masks: Array indicating non-terminal (1) or terminal (0) transitions.
+            # Apply weighting for each reward event
+            subgoal_weights = jax.vmap(weight_window)(reward_indices, subgoal_weights)
 
-        Returns:
-            subgoal_weights: Array of weights corresponding to each sample in the batch.
-        """
-        # Initialize weights to 1
-        subgoal_weights = jnp.ones_like(rewards)
+            # Additional weighting based on value predictions
+            if hasattr(self, 'network'):
+                value_predictions = self.network.select('value')(
+                    batch['observations'], batch['value_goals']
+                )[0]
+                # Increase weights for transitions leading to high-value states
+                value_weight_factor = jnp.clip(value_predictions / value_predictions.mean(), 0.5, 2.0)
+                subgoal_weights = subgoal_weights * value_weight_factor
 
-        # Identify indices where rewards are received
-        reward_indices = jnp.where(rewards > 0)[0]
-
-        # Assign higher weights to samples preceding reward events
-        # For simplicity, assign a weight of 2 to the state-action pair preceding a reward
-        # and leave others as 1
-        # This can be adjusted based on specific requirements
-
-        def assign_weights(idx, weights):
-            # Avoid out-of-bounds
-            condition = idx > 0
-            return jax.lax.cond(
-                condition,
-                lambda: weights.at[idx - 1].multiply(2.0),
-                lambda: weights,
-            )
-
-        subgoal_weights = jax.vmap(assign_weights)(reward_indices, jnp.zeros_like(reward_indices))
-        # Flatten and ensure the weights align with the batch size
-        # This simplistic approach may need refinement for overlapping subgoals
-
-        # Alternative approach: For all samples, if the next state has a reward, weight current sample higher
-        # This avoids handling multiple rewards and overlapping weights
-        next_rewards = jnp.roll(rewards, -1)
-        next_masks = jnp.roll(masks, -1)
-        weight_multiplier = 2.0
-        subgoal_weights = jnp.where((next_rewards > 0) & (next_masks > 0), weight_multiplier, 1.0)
-
-        return subgoal_weights
-
+    return subgoal_weights
 
 def get_config():
     config = ml_collections.ConfigDict(

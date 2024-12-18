@@ -325,7 +325,106 @@ class GCHIQLAgent(flax.struct.PyTreeNode):
         params['modules_target_value'] = params['modules_value']
 
         return cls(rng, network=network, config=flax.core.FrozenDict(**config))
+    def extract_subgoal_weights(self, rewards: jnp.ndarray, masks: jnp.ndarray, batch=None) -> jnp.ndarray:
+            """
+            Enhanced subgoal weight extraction with temporal decay and value-based weighting.
+            
+            Args:
+                rewards: Array of rewards for each timestep
+                masks: Array indicating non-terminal (1) or terminal (0) transitions
+                batch: Optional batch data for value and goal-based weighting
+            
+            Returns:
+                subgoal_weights: Array of weights for each transition
+            """
+            # Initialize base weights
+            subgoal_weights = jnp.ones_like(rewards)
 
+            # Get hyperparameters from config
+            decay_factor = self.config.get('subgoal_decay', 0.9)
+            window_size = self.config.get('subgoal_steps', 25)  
+            base_multiplier = self.config.get('subgoal_weight_multiplier', 2.0)
+            value_weight_scale = self.config.get('value_weight_scale', 0.5)
+            
+            # 1. Temporal Weighting
+            def compute_temporal_weights(rewards, masks):
+                # Find reward events
+                reward_indices = jnp.where((rewards > 0) & (masks > 0))[0]
+                
+                def apply_decay_window(idx, base_weights):
+                    # Calculate decay for window before reward
+                    window_start = jnp.maximum(0, idx - window_size)
+                    steps = jnp.arange(window_size)
+                    decay = decay_factor ** (window_size - steps - 1)
+                    
+                    def update_weight(i, weights):
+                        curr_idx = idx - i - 1
+                        return jax.lax.cond(
+                            curr_idx >= window_start,
+                            lambda w: w.at[curr_idx].multiply(base_multiplier * decay[i]),
+                            lambda w: w,
+                            weights
+                        )
+                    
+                    return jax.lax.fori_loop(0, window_size, update_weight, base_weights)
+                
+                # Apply temporal weighting for each reward
+                temporal_weights = jax.lax.foldl(
+                    apply_decay_window,
+                    reward_indices,
+                    subgoal_weights
+                )
+                return temporal_weights
+            
+            # 2. Value-Based Weighting
+            def compute_value_weights(batch):
+                # Get value predictions
+                v1, v2 = self.network.select('value')(batch['observations'], batch['value_goals'])
+                values = (v1 + v2) / 2
+                
+                # Normalize to [0.5, 1.5] range for stable weighting
+                value_weights = 1.0 + value_weight_scale * (values - values.mean()) / (values.std() + 1e-8)
+                return value_weights
+            
+            # 3. Goal-Based Importance
+            def compute_goal_weights(batch):
+                # Get state and goal representations
+                state_reps = self.network.select('goal_rep')(batch['observations'])
+                goal_reps = self.network.select('goal_rep')(batch['value_goals'])
+                
+                # Compute normalized distance to goals
+                distances = jnp.linalg.norm(state_reps - goal_reps, axis=-1)
+                norm_distances = distances / (distances.max() + 1e-8)
+                
+                # Convert to weights (closer to goal = higher weight)
+                goal_weights = 1.0 + (1.0 - norm_distances)
+                return goal_weights
+            
+            # Combine weightings
+            weights = compute_temporal_weights(rewards, masks)
+            
+            if batch is not None:
+                try:
+                    # Add value-based weighting
+                    value_weights = compute_value_weights(batch)
+                    weights = weights * value_weights
+                    
+                    # Add goal-based weighting
+                    goal_weights = compute_goal_weights(batch)
+                    weights = weights * goal_weights
+                except:
+                    pass  # Fall back to temporal weights if value/goal weighting fails
+            
+            # Normalize weights
+            weights = weights * masks  # Zero out terminal states
+            weight_mean = weights.mean()
+            weights = jnp.where(
+                weight_mean > 0,
+                weights / weight_mean,
+                weights
+            )
+            
+            return weights
     def get_config():
         config = ml_collections.ConfigDict(
             dict(
@@ -360,53 +459,21 @@ class GCHIQLAgent(flax.struct.PyTreeNode):
                 gc_negative=True,  # Whether to use '0 if s == g else -1' (True) or '1 if s == g else 0' (False) as reward.
                 p_aug=0.0,  # Probability of applying image augmentation.
                 frame_stack=ml_collections.config_dict.placeholder(int),  # Number of frames to stack.
-                # Hierarchical Mechanism Parameters
-                use_hierarchical=True,  # Enable hierarchical mechanism.
-                subgoal_weighting=True,  # Enable subgoal weighting.
-                subgoal_weight_multiplier=2.0,  # Multiplier for subgoal weights
+                
+                use_hierarchical=True,              # Enable hierarchical mechanism
+                subgoal_weighting=True,            # Enable subgoal weighting
+                subgoal_weight_multiplier=2.0,     # Base multiplier for subgoal weights
+                subgoal_decay=0.9,                 # Temporal decay factor
+                subgoal_steps=25,                  # Window size for temporal weighting
+                value_weight_scale=0.5,            # Scale factor for value-based weighting
+                use_value_weighting=True,          # Enable value-based weighting
+                use_goal_weighting=True,           # Enable goal-based weighting
+                normalize_weights=True,            # Whether to normalize weights
+                min_weight=0.5,                    # Minimum weight value
+                max_weight=2.0,                    # Maximum weight value
             )
         )
         return config
 
-    # Add the hierarchical mechanism based on rewards
-    def extract_subgoal_weights(self, rewards: jnp.ndarray, masks: jnp.ndarray) -> jnp.ndarray:
-        """
-        Extract subgoal weights based on rewards.
-
-        Args:
-            rewards: Array of rewards for each timestep in the batch.
-            masks: Array indicating non-terminal (1) or terminal (0) transitions.
-
-        Returns:
-            subgoal_weights: Array of weights corresponding to each sample in the batch.
-        """
-        # Initialize weights to 1
-        subgoal_weights = jnp.ones_like(rewards)
-
-        # Identify indices where rewards are received
-        reward_indices = jnp.where(rewards > 0)[0]
-
-        # Assign higher weights to samples preceding reward events
-        # For simplicity, assign a weight of `subgoal_weight_multiplier` to the state-action pair preceding a reward
-        # and leave others as 1
-
-        # Avoid out-of-bounds by ensuring idx > 0
-        def assign_weight(idx, weights):
-            return jax.lax.cond(
-                idx > 0,
-                lambda: weights.at[idx - 1].multiply(self.config.subgoal_weight_multiplier),
-                lambda: weights,
-            )
-
-        # Vectorize the weight assignment
-        subgoal_weights = jax.vmap(assign_weight)(reward_indices, subgoal_weights)
-
-        # Alternatively, a more efficient approach:
-        # If the next state has a reward, weight the current sample higher
-        next_rewards = jnp.roll(rewards, -1)
-        next_masks = jnp.roll(masks, -1)
-        weight_multiplier = self.config.get('subgoal_weight_multiplier', 2.0)
-        subgoal_weights = jnp.where((next_rewards > 0) & (next_masks > 0), weight_multiplier, 1.0)
-
-        return subgoal_weights
-
+  
+    
