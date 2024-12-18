@@ -255,7 +255,7 @@ class SACAgent(flax.struct.PyTreeNode):
                 value_weight_factor = jnp.clip(value_predictions / value_predictions.mean(), 0.5, 2.0)
                 subgoal_weights = subgoal_weights * value_weight_factor
 
-    return subgoal_weights
+            return subgoal_weights
 
 def get_config():
     config = ml_collections.ConfigDict(

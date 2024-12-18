@@ -184,8 +184,8 @@ class HGCIQLAgent(flax.struct.PyTreeNode):
 
         return cls(rng, network=network, config=flax.core.FrozenDict(**config))
 
-    @staticmethod
-    def get_config():
+ 
+def get_config():
         return ml_collections.ConfigDict(
             dict(
                 agent_name='gc_iql',

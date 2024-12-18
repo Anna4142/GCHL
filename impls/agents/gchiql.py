@@ -425,7 +425,7 @@ class GCHIQLAgent(flax.struct.PyTreeNode):
             )
             
             return weights
-    def get_config():
+def get_config():
         config = ml_collections.ConfigDict(
             dict(
                 # Agent hyperparameters.
