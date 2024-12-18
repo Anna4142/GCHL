@@ -9,6 +9,8 @@ from agents.hsac import HSACAgent  # Hierarchical SAC
 from agents.gchbc import GCHBCAgent  # Import GCHBC agent
 from agents.gchiql import GCHIQLAgent
 from agents.gchcrl import GCHCRLAgent
+from agents.hgciql import HGCIQLAgent
+from agents.HBC import HBCAgent
 agents = dict(
     crl=CRLAgent,
     gcbc=GCBCAgent,
@@ -21,4 +23,6 @@ agents = dict(
     gchiql=GCHIQLAgent,
     hsac=HSACAgent,  # Hierarchical SAC
     gchbc=GCHBCAgent,  # Goal-Conditioned Hierarchical BC agent
+    hgciql=HGCIQLAgent,
+    hbc=HBCAgent
 )
