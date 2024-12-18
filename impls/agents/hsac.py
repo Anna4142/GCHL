@@ -10,7 +10,7 @@ from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
 from utils.networks import GCActor, GCValue, LogParam
 
 
-class SACAgent(flax.struct.PyTreeNode):
+class HSACAgent(flax.struct.PyTreeNode):
     """Soft actor-critic (SAC) agent with hierarchical mechanism based on rewards."""
 
     rng: Any
