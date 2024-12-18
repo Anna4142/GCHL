@@ -126,23 +126,30 @@ class GCHBCAgent(flax.struct.PyTreeNode):
 
 
 def get_config():
-    """Configuration for the GCHBC agent."""
     config = ml_collections.ConfigDict(
         dict(
             # Agent hyperparameters.
-            agent_name='gchbc',  # Agent name.
+            agent_name='gcbc',  # Agent name.
             lr=3e-4,  # Learning rate.
             batch_size=1024,  # Batch size.
             actor_hidden_dims=(512, 512, 512),  # Actor network hidden dimensions.
-            const_std=True,  # Constant standard deviation for actor.
-            discrete=False,  # Action space type.
-            reward_change_threshold=0.5,  # Threshold for detecting significant reward changes.
-            encoder=None,  # Encoder (optional).
+            discount=0.99,  # Discount factor (unused by default; can be used for geometric goal sampling in GCDataset).
+            const_std=True,  # Whether to use constant standard deviation for the actor.
+            discrete=False,  # Whether the action space is discrete.
+            encoder=ml_collections.config_dict.placeholder(str),  # Visual encoder name (None, 'impala_small', etc.).
             # Dataset hyperparameters.
-            dataset_class='GCDataset',
-            actor_p_curgoal=0.0,
-            actor_p_trajgoal=1.0,
-            actor_p_randomgoal=0.0,
+            dataset_class='GCDataset',  # Dataset class name.
+            value_p_curgoal=0.0,  # Unused (defined for compatibility with GCDataset).
+            value_p_trajgoal=1.0,  # Unused (defined for compatibility with GCDataset).
+            value_p_randomgoal=0.0,  # Unused (defined for compatibility with GCDataset).
+            value_geom_sample=False,  # Unused (defined for compatibility with GCDataset).
+            actor_p_curgoal=0.0,  # Probability of using the current state as the actor goal.
+            actor_p_trajgoal=1.0,  # Probability of using a future state in the same trajectory as the actor goal.
+            actor_p_randomgoal=0.0,  # Probability of using a random state as the actor goal.
+            actor_geom_sample=False,  # Whether to use geometric sampling for future actor goals.
+            gc_negative=True,  # Unused (defined for compatibility with GCDataset).
+            p_aug=0.0,  # Probability of applying image augmentation.
+            frame_stack=ml_collections.config_dict.placeholder(int),  # Number of frames to stack.
         )
     )
     return config
