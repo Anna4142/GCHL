@@ -195,8 +195,7 @@ class HBCAgent(flax.struct.PyTreeNode):
 
         return cls(rng, network=network, config=flax.core.FrozenDict(**config))
 
-    @staticmethod
-    def get_config():
+def get_config():
         config = ml_collections.ConfigDict(
             dict(
                 # Agent hyperparameters
