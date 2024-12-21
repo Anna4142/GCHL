@@ -1,3 +1,15 @@
+
+from typing import Any
+
+import flax
+import jax
+import jax.numpy as jnp
+import ml_collections
+import optax
+from utils.encoders import GCEncoder, encoder_modules
+from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
+from utils.networks import GCActor, GCDiscreteActor
+
 class GCHBCAgent(flax.struct.PyTreeNode):
     """Goal-Conditioned Hierarchical Behavioral Cloning (GCHBC) agent with enhanced subgoal extraction."""
 
@@ -181,6 +193,7 @@ def get_config():
             gc_negative=True,
             p_aug=0.0,
             frame_stack=ml_collections.config_dict.placeholder(int),
+            encoder=ml_collections.config_dict.placeholder(str), 
         )
     )
     return config
